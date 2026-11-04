@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/takeshi46/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
-// @version      1.22.0
+// @version      1.23.0
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -191,9 +191,10 @@
         // 保存済みの縮小サムネ（すべての本）を削除する。挿絵の位置とURLは残す。
         try { for (const k of Object.keys(localStorage)) if (k.startsWith('pbv-thumbs')) localStorage.removeItem(k); } catch {}
       } else if (data.type === 'pbv-set') {
-        // 保存してよい設定だけを受け付ける（読み上げ速度・縦表示の余白・声）。
-        if (!['pbv-rate', 'pbv-pad2', 'pbv-voice', 'pbv-thumbsave'].includes(data.key) || typeof data.value !== 'string' || data.value.length > 80) return;
+        // 保存してよい設定だけを受け付ける（読み上げ速度・縦表示の余白・声・サムネ保存・表示モード）。
+        if (!['pbv-rate', 'pbv-pad2', 'pbv-voice', 'pbv-thumbsave', 'pbv-vertical'].includes(data.key) || typeof data.value !== 'string' || data.value.length > 80) return;
         if (data.key === 'pbv-thumbsave' && !['all', 'unlinked', 'none'].includes(data.value)) return;
+        if (data.key === 'pbv-vertical' && !['0', '1'].includes(data.value)) return;
         try {
           const all = JSON.parse(localStorage.getItem('pbv-settings') || '{}');
           all[data.key] = data.value;
@@ -788,7 +789,8 @@
     if (typeof context.landing === 'string' && /^GBS\.[A-Za-z0-9_.+-]{1,180}$/.test(context.landing))
       landing = { signature: '', steps: 0 };
     if (context.bookmark) back.disabled = false;
-    if (context.mode && !active) toggle.click();
+    // 挿絵への移動中はその時の表示モード、それ以外は前回の表示モード（全部の本で共通）で開く。
+    if ((context.mode || cfg['pbv-vertical'] === '1') && !active) toggle.click();
     if (landing) setTimeout(append, 350);
   });
   window.parent.postMessage({ type: 'pbv-context' }, 'https://play.google.com');
@@ -1065,7 +1067,7 @@
   };
   // 親ページに保存してあった設定を反映する（読み込み直後に1回）。
   function applySettings(saved) {
-    for (const k of ['pbv-rate', 'pbv-pad2', 'pbv-voice', 'pbv-thumbsave']) if (typeof saved[k] === 'string') cfg[k] = saved[k];
+    for (const k of ['pbv-rate', 'pbv-pad2', 'pbv-voice', 'pbv-thumbsave', 'pbv-vertical']) if (typeof saved[k] === 'string') cfg[k] = saved[k];
     if (['all', 'unlinked', 'none'].includes(cfg['pbv-thumbsave'])) { thumbSave = cfg['pbv-thumbsave']; thumbSel.value = thumbSave; }
     const r = Number(cfg['pbv-rate']);
     if (r >= 0.5 && r <= 2.5) rate = r;
@@ -1266,6 +1268,8 @@
   toggle.addEventListener('click', () => {
     if (speaking) stopSpeech();   // 表示モードが変わるので読み上げを止める
     active = !active;
+    // 表示モードを保存し、次に開いたときも同じモードにする。全ページ調査の一時的な切り替えは保存しない。
+    if (!scanning) store('pbv-vertical', active ? '1' : '0');
     view.hidden = !active;
     showMode(active);
     // メニューは開いたままにする（続けて読み上げなどを操作できるように）。閉じるのは ☰/✕ か下に引っ張ったときだけ。
