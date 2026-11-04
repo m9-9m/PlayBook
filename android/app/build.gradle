@@ -3,6 +3,22 @@ android {
     namespace 'app.playbook'
     compileSdk 34
     defaultConfig { applicationId 'app.playbook'; minSdk 26; targetSdk 34; versionCode 41; versionName '0.14.0' }
+    // 署名鍵は環境変数で渡す（鍵そのものはリポジトリに入れない）。端末に入っているアプリと同じ鍵で署名すると、上書きインストールできる。
+    // GitHub Actions では Secrets から、手元では KEYSTORE_FILE などを設定して使う。
+    signingConfigs {
+        release {
+            def keystore = System.getenv('KEYSTORE_FILE')
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes { release { signingConfig signingConfigs.release } }
+    // リリースビルド時の lint は使わない（assets の生成タスクとの順序エラーになるため）。
+    lint { checkReleaseBuilds false }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     // ??????????????????????????? assets ??????
     sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/assets')

@@ -1,0 +1,41 @@
+name: Release APK
+
+# タグ（v0.13.7 など）を push するか、手動で実行すると、APK を作って Releases に載せる。
+# 署名鍵は Secrets（KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD）。
+# 端末に入っているアプリと同じ鍵なので、ダウンロードした APK をそのまま上書きインストールできる。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Build (signed)
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          KEYSTORE_FILE="$RUNNER_TEMP/release.keystore" gradle assembleRelease --no-daemon
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then TAG="$GITHUB_REF_NAME"
+          else TAG="v$(grep -o "versionName '[^']*'" android/app/build.gradle | cut -d"'" -f2)"; fi
+          APK="PlayBook-$TAG.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release upload "$TAG" "$APK" --clobber
+          else gh release create "$TAG" "$APK" --title "PlayBook $TAG" --generate-notes --target "$GITHUB_SHA"; fi
