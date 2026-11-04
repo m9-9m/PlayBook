@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/takeshi46/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
-// @version      1.20.7
+// @version      1.21.0
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -178,7 +178,10 @@
       if (data.type === 'pbv-context') {
         let settings = {};
         try { settings = JSON.parse(localStorage.getItem('pbv-settings') || '{}'); } catch {}
-        event.source.postMessage({ type: 'pbv-context', id, pg: url.searchParams.get('pg'), mode, bookmark, index: savedIndex, landing, settings, thumbs: loadThumbs(id), images: imageFetches }, event.origin);
+        // 総ページ数（本一覧が保存した値）。縦表示のページ進捗に使う。
+        let total = 0;
+        try { const v = JSON.parse(localStorage.getItem('pbv-lib-progress') || '{}')[id]; if (Array.isArray(v) && v[1] > 0) total = v[1]; } catch {}
+        event.source.postMessage({ type: 'pbv-context', id, pg: url.searchParams.get('pg'), mode, bookmark, index: savedIndex, landing, settings, thumbs: loadThumbs(id), images: imageFetches, total }, event.origin);
       } else if (data.type === 'pbv-thumb') {
         // 形式と大きさを確かめてから保存する（位置は GBS. 形式、画像は JPEG の data URL で60KBまで）。
         if (typeof data.pg !== 'string' || !/^GBS\.[A-Za-z0-9_.+-]{1,180}$/.test(data.pg)) return;
@@ -326,7 +329,15 @@
       overflow:auto;background:var(--pbv-bg,#fff);overscroll-behavior:contain;overflow-anchor:none; }
     #pbv-view[hidden] { display:none!important; }
     #pbv-view.pbv-padded { box-sizing:border-box;padding-bottom:var(--pbv-sheet,0px); }
-    #pbv-pages { padding:0 var(--pbv-pad,28px);margin:auto;width:min(900px,100%);box-sizing:border-box;
+    /* 縦表示のページ進捗（下端の細いバーと「43 / 253」）。リーダー下部のページ表示は縦表示の裏に隠れるため。 */
+    #pbv-progress { position:fixed;left:0;right:0;bottom:0;z-index:2147483646;pointer-events:none; }
+    #pbv-progress[hidden] { display:none!important; }
+    #pbv-progress u { position:absolute;left:0;right:0;bottom:0;height:3px;background:#8883; }
+    #pbv-progress i { display:block;height:100%;background:#1a73e8; }
+    #pbv-progress b { position:absolute;left:50%;bottom:calc(8px + env(safe-area-inset-bottom));transform:translateX(-50%);
+      padding:2px 10px;border-radius:10px;border:1px solid #8886;background:var(--pbv-bg,#fff);color:var(--pbv-ui,#222);
+      font:12px/1.4 sans-serif;white-space:nowrap;opacity:.85; }
+    #pbv-pages { padding:0 var(--pbv-pad,28px) 36px;margin:auto;width:min(900px,100%);box-sizing:border-box;
       display:flex;flex-direction:column;align-items:center;gap:0; }
     #pbv-pages > .pbv-sheet { flex:none;position:relative;display:block;
       overflow:hidden;background:transparent; }
@@ -383,6 +394,12 @@
       background:var(--pbv-bg,#fff);border-top:1px solid #8886;border-radius:18px 18px 0 0;
       box-shadow:0 -4px 18px rgba(0,0,0,.3); }
     #pbv-images:not(.pbv-open) #pbv-panel { display:none; }
+    /* 上端のつまみ。パネルを下へ引っ張ると閉じる。 */
+    /* 右上の「✕」でも閉じられる。 */
+    #pbv-head { position:relative;display:flex;align-items:center;justify-content:center;min-height:24px;margin:-6px 0 -2px; }
+    #pbv-grip { width:40px;height:5px;border-radius:3px;background:#8888; }
+    #pbv-panel #pbv-close { position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:40px;height:40px;min-height:0;
+      padding:0;border:0;border-radius:50%;background:transparent;font-size:20px;line-height:1; }
     /* 広い画面（PCブラウザ）では、パネルを下端の中央に寄せて幅を抑える。スマホは全幅のまま。 */
     @media (min-width:700px) { #pbv-panel { width:min(100%,420px);align-self:center; } }
     #pbv-panel .pbv-row { display:flex;gap:8px; }
@@ -459,7 +476,11 @@
   const pages = document.createElement('div');
   pages.id = 'pbv-pages';
   view.append(pages);
-  document.body.append(view);
+  const progress = document.createElement('div');
+  progress.id = 'pbv-progress';
+  progress.hidden = true;
+  progress.innerHTML = '<u><i></i></u><b></b>';
+  document.body.append(view, progress);
   const imageTools = document.createElement('nav');
   imageTools.id = 'pbv-images';
   imageTools.hidden = false;
@@ -505,7 +526,10 @@
   modeRow.style.cssText = 'display:grid;grid-template-columns:1fr 1.9fr 1fr';
   const thumbBox = mk('details');
   thumbBox.append(mk('summary', 0, 'サムネイルの設定'), thumbField, thumbClear);
-  panel.append(modeRow, row(speak), rateField, row(engineField, voiceField), padField, thumbBox);
+  const head = mk('div', 'pbv-head'), closeBtn = mk('button', 'pbv-close', '✕');
+  closeBtn.setAttribute('aria-label', 'メニューを閉じる');
+  head.append(mk('div', 'pbv-grip'), closeBtn);
+  panel.append(head, modeRow, row(speak), rateField, row(engineField, voiceField), padField, thumbBox);
   imageTools.append(status, menu, panel);
   const displayBtn = mk('button', 'pbv-display', 'Aa');
   displayBtn.setAttribute('aria-label', '表示オプション');
@@ -762,6 +786,31 @@
     return [...document.querySelectorAll('reader-pages reader-page.shown')]
       .filter(p => p.classList.contains('-gb-loaded') && p.querySelector('reader-rendered-page'));
   }
+  function slider() { return document.querySelector('reader-app input.mdc-slider__input'); }
+  // 縦表示のページ進捗。画面上端付近を読んでいるページの番号と、総ページ数（本一覧の保存値、なければスライダーの最大値）。
+  let progressFrame = 0;
+  function showProgress() {
+    if (!progressFrame) progressFrame = requestAnimationFrame(updateProgress);
+  }
+  function updateProgress() {
+    progressFrame = 0;
+    const sheets = [...pages.children];
+    if (!active || !sheets.length) { progress.hidden = true; return; }
+    const line = view.getBoundingClientRect().top + 40;
+    // 上端の線より上から始まっている最後のページ（無ければ先頭ページ）。その中で線より上にある最後のページ境界の印。
+    const sheet = sheets.filter(s => s.getBoundingClientRect().top <= line).at(-1) || sheets[0];
+    let num = sheet.dataset.num === '' ? NaN : Number(sheet.dataset.num);
+    for (const mark of sheet.querySelectorAll('[data-pbv-pt]')) {
+      if (mark.getBoundingClientRect().top > line) break;
+      num = Number(mark.dataset.pbvPt);
+    }
+    const total = context?.total > 0 ? context.total : Number(slider()?.max) || 0;
+    if (!Number.isFinite(num)) { progress.hidden = true; return; }
+    const pct = total ? Math.min(100, Math.round(num / total * 100)) : 0;
+    progress.querySelector('b').textContent = total ? `${num} / ${total}（${pct}%）` : `${num}ページ`;
+    progress.querySelector('i').style.width = `${pct}%`;
+    progress.hidden = false;
+  }
   function resize() {
     // 画像ページは、左右の余白（画面幅で変わる）を除いた幅に収める。
     const padding = parseFloat(getComputedStyle(pages).paddingLeft) * 2;
@@ -795,7 +844,7 @@
     // ponytail: 2.625 は実測値（本によって違う場合は表示オプションの％と少しずれる）。
     const ratio = parseFloat(style.lineHeight) / size;
     const lh = ratio > 0 && isFinite(ratio) ? Math.min(3.5, Math.max(1.2, 1.9 * ratio / 2.625)).toFixed(3) : '';
-    for (const el of [view, imageTools, gallery, scanBox]) {
+    for (const el of [view, imageTools, gallery, scanBox, progress]) {
       el.style.setProperty('--pbv-bg', bg);
       el.style.setProperty('--pbv-ui', ui);
       el.style.setProperty('--pbv-fg', fg);
@@ -833,6 +882,11 @@
       const segment = source.querySelector('.gb-segment');
       sheet.dataset.continues = String(/\+[1-9]\d*$/.test(segment?.getAttribute('ocean-position') || ''));
       sheet.style.cssText = `width:${rect.width}px;height:${rect.height}px;direction:${getComputedStyle(source).direction}`;
+      // ページ進捗用のページ番号（GBS.PT43 の 43）。取れないときは、今のスライダーの位置を使う。
+      // 本文中のページ境界の印（id="GBS.PT44" など）は、idを消す前に番号だけ残す。
+      const num = order(pageLocation(source).replace(/_\d+$/, '')) ?? Number(slider()?.value);
+      sheet.dataset.num = Number.isFinite(num) ? String(num) : '';
+      for (const el of sheet.querySelectorAll('[id^="GBS.PT"]')) { const n = order(el.id); if (n !== null) el.dataset.pbvPt = n; }
       for (const el of [sheet, ...sheet.querySelectorAll('[id]')]) el.removeAttribute('id');
       sheet.querySelectorAll('reader-page-overlay, reader-icon-overlay, script').forEach(el => el.remove());
       // 複製したリンクはリーダー本来の処理を失うので、クリック時に元のリンクを探せるよう印を付ける。
@@ -870,6 +924,7 @@
       }
       if (!reset && direction === -1) view.scrollTop = top + view.scrollHeight - height;
       lastScroll = view.scrollTop;
+      showProgress();
       fill();
     } else if (busy && signature && signature !== lastSignature) {
       step();
@@ -1167,19 +1222,58 @@
       view.scrollTop = 0;
       lastScroll = 0;
     }
+    showProgress();   // 通常表示では隠す
   });
   // パネルが開いている間だけ、その高さ分を縦表示とギャラリーの下端から空ける。
   const sheet = () => document.documentElement.style.setProperty('--pbv-sheet',
     imageTools.classList.contains('pbv-open') ? `${panel.offsetHeight + 54}px` : '0px');
   new ResizeObserver(sheet).observe(panel);
-  menu.addEventListener('click', () => {
-    const open = imageTools.classList.toggle('pbv-open');
+  function setMenu(open) {
+    imageTools.classList.toggle('pbv-open', open);
     view.classList.toggle('pbv-padded', open);
     menu.textContent = open ? '✕' : '☰';
     if (!open) gallery.hidden = true;
     sheet();
     renderList();
-  });
+  }
+  menu.addEventListener('click', () => setMenu(!imageTools.classList.contains('pbv-open')));
+  closeBtn.addEventListener('click', () => setMenu(false));
+  // パネルを指で下へ引っ張ると閉じる。パネルの中身が一番上までスクロールされているときだけ（途中なら普通にスクロール）。
+  // スライダー（速度・余白）の操作とは区別するため、入力欄から始めた操作では引っ張らない。
+  let drag = null;
+  panel.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    drag = e.touches.length === 1 && !e.target.closest('input') ? { x: t.clientX, y: t.clientY, dy: 0, on: false, v: 0, at: e.timeStamp } : null;
+  }, { passive: true });
+  panel.addEventListener('touchmove', e => {
+    if (!drag) return;
+    const t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
+    if (!drag.on) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (dy <= Math.abs(dx) || panel.scrollTop > 0) { drag = null; return; }   // 横・上向き、または中身のスクロール
+      drag.on = true;
+      panel.style.transition = 'none';
+    }
+    e.preventDefault();
+    const next = Math.max(0, dy);
+    drag.v = (next - drag.dy) / Math.max(1, e.timeStamp - drag.at);   // 速さ（px/ms）。素早く払っても閉じる
+    drag.dy = next; drag.at = e.timeStamp;
+    panel.style.transform = `translateY(${next}px)`;
+  }, { passive: false });
+  const release = () => {
+    const d = drag;
+    drag = null;
+    if (!d?.on) return;
+    panel.style.transition = 'transform .18s ease-out';
+    if (d.dy > Math.min(120, panel.offsetHeight / 3) || (d.dy > 24 && d.v > 0.5)) {
+      panel.style.transform = 'translateY(100%)';
+      setTimeout(() => { setMenu(false); panel.style.transform = panel.style.transition = ''; }, 180);
+    } else {
+      panel.style.transform = '';   // 少しだけなら元の位置へ戻す
+    }
+  };
+  panel.addEventListener('touchend', release);
+  panel.addEventListener('touchcancel', release);
   list.addEventListener('click', () => {
     gallery.hidden = !gallery.hidden;
     renderList();
@@ -1210,6 +1304,7 @@
     lastScroll = view.scrollTop;
     // ユーザーが端へ向かってスクロールした場合は、終端判定をやり直す。
     if (delta) { ended[delta < 0 ? -1 : 1] = false; fill(); }
+    showProgress();
   }, { passive: true });
   // リーダーの仮想ページ更新だけを監視し、自分が追加したページは監視しない。
   function watch() {
