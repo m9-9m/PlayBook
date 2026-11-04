@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/takeshi46/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/takeshi46/PlayBook/main/play-books-vertical.user.js
-// @version      1.21.0
+// @version      1.22.0
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -332,11 +332,22 @@
     /* 縦表示のページ進捗（下端の細いバーと「43 / 253」）。リーダー下部のページ表示は縦表示の裏に隠れるため。 */
     #pbv-progress { position:fixed;left:0;right:0;bottom:0;z-index:2147483646;pointer-events:none; }
     #pbv-progress[hidden] { display:none!important; }
-    #pbv-progress u { position:absolute;left:0;right:0;bottom:0;height:3px;background:#8883; }
+    /* バーは細いので、上に透明な16pxを足して押しやすくする。押すとページ移動のスライダーが出る。 */
+    #pbv-progress u { position:absolute;left:0;right:0;bottom:0;height:3px;background:#8883;pointer-events:auto;cursor:pointer;
+      border-top:16px solid transparent;background-clip:padding-box; }
     #pbv-progress i { display:block;height:100%;background:#1a73e8; }
     #pbv-progress b { position:absolute;left:50%;bottom:calc(8px + env(safe-area-inset-bottom));transform:translateX(-50%);
       padding:2px 10px;border-radius:10px;border:1px solid #8886;background:var(--pbv-bg,#fff);color:var(--pbv-ui,#222);
-      font:12px/1.4 sans-serif;white-space:nowrap;opacity:.85; }
+      font:12px/1.4 sans-serif;white-space:nowrap;opacity:.85;pointer-events:auto;cursor:pointer; }
+    #pbv-progress.pbv-seeking b { display:none; }
+    #pbv-seek { position:absolute;left:0;right:0;bottom:0;pointer-events:auto;display:grid;gap:4px;
+      padding:10px 16px calc(12px + env(safe-area-inset-bottom));background:var(--pbv-bg,#fff);color:var(--pbv-ui,#222);
+      border-top:1px solid #8886;border-radius:14px 14px 0 0;box-shadow:0 -3px 12px rgba(0,0,0,.25);font:13px sans-serif; }
+    #pbv-seek[hidden] { display:none; }
+    #pbv-seek p { display:flex;justify-content:space-between;margin:0; }
+    #pbv-seek p span:last-child { opacity:.6; }
+    #pbv-seek input { width:100%;min-height:36px;margin:0;accent-color:#1a73e8; }
+    @media (min-width:700px) { #pbv-seek { left:50%;right:auto;width:min(100%,420px);transform:translateX(-50%);box-sizing:border-box; } }
     #pbv-pages { padding:0 var(--pbv-pad,28px) 36px;margin:auto;width:min(900px,100%);box-sizing:border-box;
       display:flex;flex-direction:column;align-items:center;gap:0; }
     #pbv-pages > .pbv-sheet { flex:none;position:relative;display:block;
@@ -479,7 +490,8 @@
   const progress = document.createElement('div');
   progress.id = 'pbv-progress';
   progress.hidden = true;
-  progress.innerHTML = '<u><i></i></u><b></b>';
+  progress.innerHTML = '<u><i></i></u><b role="button" aria-label="ページ移動"></b>'
+    + '<div id="pbv-seek" hidden><p><span></span><span>指を離すと移動</span></p><input type="range" min="1" step="1" aria-label="ページ"></div>';
   document.body.append(view, progress);
   const imageTools = document.createElement('nav');
   imageTools.id = 'pbv-images';
@@ -795,7 +807,7 @@
   function updateProgress() {
     progressFrame = 0;
     const sheets = [...pages.children];
-    if (!active || !sheets.length) { progress.hidden = true; return; }
+    if (!active || !sheets.length) { progress.hidden = true; openSeek(false); return; }
     const line = view.getBoundingClientRect().top + 40;
     // 上端の線より上から始まっている最後のページ（無ければ先頭ページ）。その中で線より上にある最後のページ境界の印。
     const sheet = sheets.filter(s => s.getBoundingClientRect().top <= line).at(-1) || sheets[0];
@@ -810,6 +822,47 @@
     progress.querySelector('b').textContent = total ? `${num} / ${total}（${pct}%）` : `${num}ページ`;
     progress.querySelector('i').style.width = `${pct}%`;
     progress.hidden = false;
+    progressNum = num; progressTotal = total;
+  }
+  // 進捗バーを押すと、ページ移動のスライダーを出す。指を離したらそのページへ移動する。
+  const seekBox = progress.querySelector('#pbv-seek'), seekInput = seekBox.querySelector('input'), seekLabel = seekBox.querySelector('span');
+  let progressNum = NaN, progressTotal = 0, seekFrom = null, seekTarget = null, seekTimer;
+  const seekText = () => { seekLabel.textContent = `${seekInput.value} / ${seekInput.max}ページ`; };
+  function openSeek(open) {
+    if (open && !(progressTotal > 0 && Number.isFinite(progressNum))) { status.textContent = '総ページ数が分からないため移動できません'; return; }
+    seekBox.hidden = !open;
+    progress.classList.toggle('pbv-seeking', open);
+    if (open) { seekInput.max = progressTotal; seekInput.value = Math.min(progressTotal, Math.max(1, progressNum)); seekText(); }
+  }
+  progress.addEventListener('click', e => { if (!seekBox.contains(e.target)) openSeek(seekBox.hidden); });
+  seekInput.addEventListener('input', seekText);
+  seekInput.addEventListener('change', () => { openSeek(false); seekTo(Number(seekInput.value)); });
+  // スライダーの外を触ったら閉じる（移動はしない）。
+  document.addEventListener('pointerdown', e => { if (!seekBox.hidden && !progress.contains(e.target)) openSeek(false); }, true);
+  // リーダーのスライダーの値と、ページ番号（GBS.PT43 の 43）の差。表示中のページで実測し、一番多い差を使う。
+  const offsets = new Map();
+  function noteOffset() {
+    const s = slider(), page = shown()[0];
+    const n = page ? order(pageLocation(page).replace(/_\d+$/, '')) : null, d = Number(s?.value) - n;
+    if (n !== null && Number.isSafeInteger(d)) offsets.set(d, (offsets.get(d) || 0) + 1);
+  }
+  const sliderOffset = () => [...offsets].reduce((a, b) => b[1] > a[1] ? b : a, [0, 0])[0];
+  function seekTo(v) {
+    if (speaking) stopSpeech();
+    // 縦表示にもう読み込んであるページなら、その位置へスクロールするだけ。
+    const mark = pages.querySelector(`[data-pbv-pt="${v}"]`) || [...pages.children].find(s => s.dataset.num === String(v));
+    if (mark) { view.scrollTop += mark.getBoundingClientRect().top - view.getBoundingClientRect().top; showProgress(); return; }
+    // 無ければ、リーダーのスライダーで移動し、縦表示を作り直す（append）。
+    const s = slider();
+    if (!s) { status.textContent = 'この画面ではページ移動に対応していません'; return; }
+    clearTimeout(timeout); busy = false; list.disabled = false;
+    seekFrom = shown().map(p => p.id).join('|'); seekTarget = v;
+    clearTimeout(seekTimer); seekTimer = setTimeout(() => { seekFrom = seekTarget = null; }, 5000);
+    status.textContent = `${v}ページへ移動…`;
+    const value = Math.min(Number(s.max), Math.max(Number(s.min) || 0, v + sliderOffset()));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(s, String(value));
+    s.dispatchEvent(new Event('input', { bubbles: true }));
+    s.dispatchEvent(new Event('change', { bubbles: true }));
   }
   function resize() {
     // 画像ページは、左右の余白（画面幅で変わる）を除いた幅に収める。
@@ -857,13 +910,19 @@
     if (scanning) return;
     rememberImages();
     if (adjustLanding()) return;
+    noteOffset();
     if (!active) return;
     syncTheme();
     const height = view.scrollHeight, top = view.scrollTop;
     const visible = shown();
     const signature = visible.map(p => p.id).join('|');
     let added = false, reset = false;
-    if (!busy && seen.size && visible.length && visible.every(p => !seen.has(p.id))) {
+    if (seekFrom !== null && visible.length && signature !== seekFrom) {
+      // 進捗バーのスライダーで移動した。近いページでも、縦表示を作り直して移動先から表示する。
+      seekFrom = null; clearTimeout(seekTimer);
+      pages.replaceChildren(); seen.clear(); ended = {};
+      reset = true;
+    } else if (!busy && seen.size && visible.length && visible.every(p => !seen.has(p.id))) {
       // 目次やリンクでリーダーが離れた位置へ移動した。縦表示を作り直す。
       pages.replaceChildren(); seen.clear(); ended = {};
       reset = true;
@@ -921,6 +980,13 @@
         focusImage = false;
         const img = [...pages.querySelectorAll('img, svg')].find(el => el.getBoundingClientRect().width >= 200);
         if (img) view.scrollTop += img.getBoundingClientRect().top - view.getBoundingClientRect().top - 64;
+      }
+      if (reset && seekTarget !== null) {
+        // 移動先のページがページの途中から始まる場合は、その境目までスクロールする。
+        const mark = pages.querySelector(`[data-pbv-pt="${seekTarget}"]`);
+        if (mark) view.scrollTop += mark.getBoundingClientRect().top - view.getBoundingClientRect().top;
+        seekTarget = null;
+        if (status.textContent.endsWith('ページへ移動…')) status.textContent = '';
       }
       if (!reset && direction === -1) view.scrollTop = top + view.scrollHeight - height;
       lastScroll = view.scrollTop;
@@ -1202,11 +1268,9 @@
     active = !active;
     view.hidden = !active;
     showMode(active);
-    imageTools.classList.remove('pbv-open');
-    view.classList.remove('pbv-padded');
-    menu.textContent = '☰'; gallery.hidden = true;   // パネルを閉じた状態に戻す
-    document.documentElement.style.setProperty('--pbv-sheet', '0px');
+    // メニューは開いたままにする（続けて読み上げなどを操作できるように）。閉じるのは ☰/✕ か下に引っ張ったときだけ。
     clearTimeout(timeout);
+    seekFrom = seekTarget = null;
     busy = false;
     pendingJump = null;
     back.disabled = !context?.bookmark;
