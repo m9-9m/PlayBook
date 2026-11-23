@@ -1,7 +1,6 @@
 # PlayBook
 
-Google Play ブックスを端末のTTSで読み上げる Android アプリ（WebView）と、元の Userscript。
-本文は個人利用の範囲で、リーダーが表示している内容を読み上げるだけ。
+Google Play ブックスを端末のTTSで読み上げや縦スクロールに対応させる Android アプリ（WebView）と、元の Userscript。
 
 ## 構成
 - `android/` … WebView アプリ。同梱の `play-books-vertical.user.js` を注入し、読み上げは端末の TTS（Google 音声サービスを明示指定）。前面サービスで画面オフでも継続。
@@ -20,4 +19,3 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## 確認済み / 未確認
 - 確認済み（vivo 端末）: Google ログイン、日本語読み上げ、画面オフ継続。
 - 未確認: 長時間の連続再生、ロック画面の操作（現状は通知のみ）、声の選択UI。
-- 注意: vivo 端末の標準エンジン（com.vivo.aiservice）は日本語を中国語で読むため、アプリは Google 音声サービスを明示指定している。
