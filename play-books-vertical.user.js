@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/m9-9m/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
-// @version      1.23.0
+// @version      1.23.1
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
