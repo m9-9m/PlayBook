@@ -2,6 +2,12 @@
 
 Google Play ブックスを端末のTTSで読み上げや縦スクロールに対応させる Android アプリ（WebView）と、元の Userscript。
 
+### 登録URL
+
+```text
+https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
+```
+
 ## 構成
 - `android/` … WebView アプリ。同梱の `play-books-vertical.user.js` を注入し、読み上げは端末の TTS（Google 音声サービスを明示指定）。前面サービスで画面オフでも継続。
 - `play-books-vertical.user.js` … 縦スクロール＋読み上げ（v1.10.x）。アプリ内では `PBNative` 経由で端末TTSを使い、ブラウザ単体では Web Speech を使う（Android Chrome では synthesis-failed になる端末あり）。
