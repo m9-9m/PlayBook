@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/m9-9m/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
-// @version      1.23.1
+// @version      1.23.2
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -385,6 +385,11 @@
     #pbv-pages .pbv-horizontal [style*="display:none"],
     #pbv-pages .pbv-horizontal [style*="display: none"] { display:none!important; }
     #pbv-pages .pbv-horizontal img { max-width:100%;height:auto; }
+    /* 縦書きの本の挿絵ページでは、リーダーが <img class="fit"> に style="width:0.7px;height:1px" のような
+       縦書き用の寸法を直接書き込む。複製側ではそれを無視し、画面幅（と高さ）に収まる大きさで表示する。
+       外字（img.gaiji）は文字の大きさのままにする。 */
+    #pbv-pages .pbv-horizontal img:not(.gaiji) { width:auto!important;height:auto!important;
+      max-width:100%!important;max-height:calc(100vh - 120px)!important;object-fit:contain; }
     /* 操作ボタンはリーダーのヘッダー直下の1行にまとめ、本文に重ねない（スマホ対応） */
     /* 操作は右下の「☰」から。押すと下からパネルが開く（大きいボタン・見出し付き）。 */
     #pbv-images { position:fixed;left:0;right:0;bottom:0;z-index:2147483647;pointer-events:none;
@@ -690,7 +695,7 @@
     if (scanning || busy || !slider) { status.textContent = scanning || busy ? '処理中です' : 'この画面では全ページの確認に対応していません'; return; }
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    const key = () => shown().map(p => p.id + ':' + (p.querySelector('.gb-segment')?.getAttribute('ocean-position') || '')).join('|');
+    const key = () => shown().map(p => p.id + ':' + oceanPosition(p)).join('|');
     const go = async v => {
       const before = key();
       setter.call(slider, String(v));
@@ -742,8 +747,14 @@
     return Math.max(rect.width, Number(img.getAttribute('width')) || 0, img.naturalWidth || 0) >= 200
       && Math.max(rect.height, Number(img.getAttribute('height')) || 0, img.naturalHeight || 0) >= 200;
   }
+  // ページ先頭の位置（GBS.PT236.w.2.0.0+43 など。+43 は段落の途中から始まることを示す）。
+  // 以前は .gb-segment に付いていたが、今はページをまたいで続く段落（<p ocean-reopened-element>）の側に付く。
+  function oceanPosition(page) {
+    return (page.querySelector('.gb-segment[ocean-position]') || page.querySelector('.gb-segment [ocean-position]'))
+      ?.getAttribute('ocean-position') || '';
+  }
   function pageLocation(page) {
-    return page.querySelector('.gb-segment')?.getAttribute('ocean-position')?.replace(/\+(\d+)$/, '_$1')
+    return oceanPosition(page).replace(/\+(\d+)$/, '_$1')
       || page.querySelector('[id^="GBS."]')?.id || '';
   }
   function saveIndex() {
@@ -940,8 +951,7 @@
       if (source.classList.contains('text-mode')) sheet.classList.add('pbv-horizontal');
       sheet.dataset.width = String(rect.width);
       sheet.dataset.page = source.id;
-      const segment = source.querySelector('.gb-segment');
-      sheet.dataset.continues = String(/\+[1-9]\d*$/.test(segment?.getAttribute('ocean-position') || ''));
+      sheet.dataset.continues = String(/\+[1-9]\d*$/.test(oceanPosition(source)));
       sheet.style.cssText = `width:${rect.width}px;height:${rect.height}px;direction:${getComputedStyle(source).direction}`;
       // ページ進捗用のページ番号（GBS.PT43 の 43）。取れないときは、今のスライダーの位置を使う。
       // 本文中のページ境界の印（id="GBS.PT44" など）は、idを消す前に番号だけ残す。
@@ -1040,6 +1050,8 @@
     if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
       ended[direction] = true;
       finish(`${label}がありません`);
+      // 1ページ目のように画面に収まってスクロールできない場合でも、反対側（次のページ）は読み込む。
+      setTimeout(fill, 0);
       return;
     }
     lastSignature = shown().map(p => p.id).join('|');
