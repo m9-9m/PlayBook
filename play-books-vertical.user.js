@@ -476,6 +476,9 @@
       display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;align-content:start;
       background:var(--pbv-bg,#fff);border:1px solid #1a73e8;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.25); }
     #pbv-gallery[hidden] { display:none!important; }
+    /* 広い画面（PC）ではパネルが下端の中央（幅420px）にあるので、一覧はその左の空き（上から下まで）に出す。
+       パネルの高さを引くと、高さの低いウィンドウでは一覧が1行も入らなくなるため。 */
+    @media (min-width:900px) { #pbv-gallery { max-height:calc(100% - 72px);width:min(640px,calc(50% - 226px)); } }
     #pbv-gallery .pbv-scan-start { grid-column:1 / -1;flex-direction:row!important;justify-content:center;padding:10px!important;
       font-weight:bold;border-color:#1a73e8!important;color:#1a73e8!important; }
     #pbv-scan { position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;
