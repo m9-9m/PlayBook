@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/m9-9m/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
-// @version      1.23.3
+// @version      1.23.4
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -492,6 +492,14 @@
     #pbv-pages .pbv-horizontal p.pbv-tts { background:rgba(26,115,232,.22)!important; }
     #pbv-pages .pbv-horizontal svg { display:block;width:100%!important;
       height:auto!important;max-width:100%; }
+    /* 縦表示の挿絵は、タップで全画面に拡大して見られる（openZoom）。 */
+    #pbv-pages img:not(.gaiji), #pbv-pages svg:has(image) { cursor:zoom-in; }
+    #pbv-zoom { position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;
+      overflow:hidden;background:#000;touch-action:none;user-select:none;-webkit-user-select:none; }
+    #pbv-zoom[hidden] { display:none!important; }
+    #pbv-zoom img { max-width:100%;max-height:100%;object-fit:contain;will-change:transform;-webkit-user-drag:none;pointer-events:none; }
+    #pbv-zoom button { position:absolute;top:calc(8px + env(safe-area-inset-top));right:8px;width:44px;height:44px;
+      border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font:22px/1 sans-serif;cursor:pointer; }
   `;
   document.head.append(style);
   const toggle = document.createElement('button');
@@ -1402,6 +1410,88 @@
     if (original) original.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     else status.textContent = 'このリンクは通常表示で開いてください';
   }, true);
+  // 挿絵の拡大表示。縦表示の挿絵をタップすると、黒い背景の全画面に画面に収まる大きさで出す。
+  // ピンチ（スマホ）・ホイール（PC）で最大8倍まで拡大し、拡大中は指やマウスで動かせる。
+  // タップすると、拡大中なら元の大きさに戻し、元の大きさなら閉じる。✕・Escキーでも閉じる。
+  const zoomBox = document.createElement('div'), zoomImg = new Image(), zoomClose = document.createElement('button');
+  zoomBox.id = 'pbv-zoom'; zoomBox.hidden = true;
+  zoomImg.alt = ''; zoomImg.draggable = false;
+  zoomClose.type = 'button'; zoomClose.textContent = '✕'; zoomClose.setAttribute('aria-label', '閉じる');
+  zoomBox.append(zoomImg, zoomClose);
+  document.body.append(zoomBox);
+  let zs = 1, ztx = 0, zty = 0, zMoved = false;
+  const zPointers = new Map();
+  const zApply = () => {
+    if (zs <= 1.001) { zs = 1; ztx = 0; zty = 0; }
+    zoomImg.style.transform = `translate(${ztx}px, ${zty}px) scale(${zs})`;
+  };
+  // 画面上の点 (x, y) を動かさずに拡大率を変える（画像は画面の中央を基準に拡大される）。
+  const zoomAt = (next, x, y) => {
+    next = Math.min(8, Math.max(1, next));
+    const cx = x - zoomBox.clientWidth / 2 - ztx, cy = y - zoomBox.clientHeight / 2 - zty;
+    ztx += cx - cx * next / zs; zty += cy - cy * next / zs;
+    zs = next; zApply();
+  };
+  function openZoom(src) {
+    zs = 1; ztx = 0; zty = 0; zApply();
+    zoomImg.src = src;
+    zoomBox.hidden = false;
+  }
+  function closeZoom() { zoomBox.hidden = true; zPointers.clear(); zoomImg.removeAttribute('src'); }
+  pages.addEventListener('click', event => {
+    if (event.target.closest?.('a')) return;
+    const svg = event.target.closest?.('svg'), img = svg ? null : event.target.closest?.('img');
+    const el = img || svg;
+    if (!el || img?.classList.contains('gaiji')) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 64 || rect.height < 64) return;   // 小さな飾り画像は拡大しない
+    const src = img ? (img.currentSrc || img.src)
+      : svg.querySelector('image')?.getAttribute('href') || svg.querySelector('image')?.getAttribute('xlink:href');
+    if (!src) return;
+    event.preventDefault();
+    openZoom(src);
+  });
+  zoomClose.addEventListener('click', event => { event.stopPropagation(); closeZoom(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !zoomBox.hidden) closeZoom(); });
+  zoomBox.addEventListener('wheel', event => {
+    event.preventDefault();
+    zoomAt(zs * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+  }, { passive: false });
+  zoomBox.addEventListener('pointerdown', event => {
+    if (event.target === zoomClose) return;
+    if (!zPointers.size) zMoved = false;
+    zoomBox.setPointerCapture(event.pointerId);
+    zPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  });
+  zoomBox.addEventListener('pointermove', event => {
+    const prev = zPointers.get(event.pointerId);
+    if (!prev) return;
+    const points = [...zPointers.values()];
+    if (zPointers.size >= 2) {
+      // 2本指: 指の間隔の変化で拡大し、2本の真ん中の移動で動かす。
+      const other = points.find(p => p !== prev);
+      const before = Math.hypot(prev.x - other.x, prev.y - other.y);
+      const after = Math.hypot(event.clientX - other.x, event.clientY - other.y);
+      const mx = (event.clientX + other.x) / 2, my = (event.clientY + other.y) / 2;
+      ztx += (event.clientX - prev.x) / 2; zty += (event.clientY - prev.y) / 2;
+      if (before > 0) zoomAt(zs * after / before, mx, my); else zApply();
+      zMoved = true;
+    } else if (Math.hypot(event.clientX - prev.x, event.clientY - prev.y) > 0) {
+      if (zs > 1) { ztx += event.clientX - prev.x; zty += event.clientY - prev.y; zApply(); }
+      if (Math.abs(event.clientX - prev.x) + Math.abs(event.clientY - prev.y) > 2) zMoved = true;
+    }
+    zPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  });
+  const zEnd = event => { zPointers.delete(event.pointerId); };
+  zoomBox.addEventListener('pointerup', zEnd);
+  zoomBox.addEventListener('pointercancel', event => { zEnd(event); zMoved = true; });
+  // 動かさずに離した（タップ）: 拡大中なら元の大きさへ、元の大きさなら閉じる。
+  // pointerup で閉じると、続く click が下の挿絵に届いて開き直すため、click で処理する。
+  zoomBox.addEventListener('click', event => {
+    event.stopPropagation();
+    if (event.target === zoomClose || zMoved) return;
+    if (zs > 1) { zs = 1; zApply(); } else closeZoom();
+  });
   back.addEventListener('click', () => {
     if (context) window.parent.postMessage({ type: 'pbv-return' }, 'https://play.google.com');
   });
