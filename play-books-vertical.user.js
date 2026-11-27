@@ -4,7 +4,7 @@
 // @homepageURL  https://github.com/m9-9m/PlayBook
 // @downloadURL  https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
 // @updateURL    https://raw.githubusercontent.com/m9-9m/PlayBook/main/play-books-vertical.user.js
-// @version      1.23.2
+// @version      1.23.3
 // @description  本一覧に読書進行度（％）を表示。端末標準TTSでの読み上げ（速度・声・追従）。横書き・上下スクロール（自動読み込み）とサムネ付き挿絵一覧ジャンプ。リーダーの章データから画像位置を取得。通常表示・ルビ対応。
 // @match        https://books.googleusercontent.com/books/reader/frame*
 // @match        https://play.google.com/books/reader*
@@ -297,6 +297,21 @@
         ? url.href : undefined;
     } catch { return undefined; }
   }
+  // 同じ画像ファイル（取得URLの pg=p079 など）を指す挿絵は1件にまとめる。挿絵の位置（GBS.PT60 と
+  // GBS.PT59.w.3.3.48 など）は画面の幅や見つけ方で表し方が変わるため、位置だけで比べると同じ挿絵が2件になる。
+  function imageFile(src) {
+    try { const u = new URL(src); return u.searchParams.get('img') === '1' ? u.searchParams.get('pg') : null; } catch { return null; }
+  }
+  function dedupeImages(index) {
+    const seen = new Set();
+    index.images = index.images.filter(item => {
+      const file = imageFile(item.src);
+      if (!file) return true;
+      if (seen.has(file)) return false;
+      seen.add(file);
+      return true;
+    });
+  }
   function mergeIndex(index, saved) {
     if (!saved) return;
     for (const item of Array.isArray(saved.images) ? saved.images : []) {
@@ -314,6 +329,7 @@
         && r[0] <= r[1] && !index.ranges.some(i => i[0] === r[0] && i[1] === r[1])) index.ranges.push(r);
     }
     index.images.sort((a, b) => a.order - b.order);
+    dedupeImages(index);
     index.ranges.sort((a, b) => a[0] - b[0]);
     index.ranges = index.ranges.reduce((merged, r) => {
       const last = merged.at(-1);
@@ -645,7 +661,7 @@
           const d = f.size - size;
           if (!f.used && d >= 0 && d <= 64 && (!best || d < best.size - size)) best = f;
         }
-        if (best) { best.used = true; item.src = best.url; saveIndex(); renderList(); }
+        if (best) { best.used = true; item.src = best.url; dedupeImages(index); saveIndex(); renderList(); }
         else await new Promise(r => setTimeout(r, 200));   // 記録は、画像が出た少しあとに届くことがある
       }
     } catch { /* 結びつけられなくても、保存した縮小サムネで表示できる */ }
@@ -886,6 +902,7 @@
     }
   }
   // リーダーが今表示している本文の文字色・書体・サイズ・背景を、縦表示へ反映する。
+  let sized = false;   // 本文の大きさを一度でも読み取れたか
   function syncTheme() {
     const page = shown().find(p => p.querySelector('.gb-segment p'));
     if (!page) return;
@@ -910,13 +927,19 @@
     // ponytail: 2.625 は実測値（本によって違う場合は表示オプションの％と少しずれる）。
     const ratio = parseFloat(style.lineHeight) / size;
     const lh = ratio > 0 && isFinite(ratio) ? Math.min(3.5, Math.max(1.2, 1.9 * ratio / 2.625)).toFixed(3) : '';
+    // 文字の大きさと行の高さは、段落が本文と同じ大きさ（章全体 .gb-segment の文字の大きさ）のときだけ読み取る。
+    // 奥付などは本の指定で小さい文字（例: 本文16pxに対し12.8px）になっており、そこで読むと縦表示全体が小さくなる。
+    // ただし、まだ一度も読み取れていない場合は、その段落の大きさを使う。
+    const seg = text.closest('.gb-segment'), segSize = seg ? parseFloat(getComputedStyle(seg).fontSize) : size;
+    const body = !sized || Math.abs(size - segSize) <= segSize * 0.05;
+    if (body && Math.abs(size - segSize) <= segSize * 0.05) sized = true;
     for (const el of [view, imageTools, gallery, scanBox, progress]) {
       el.style.setProperty('--pbv-bg', bg);
       el.style.setProperty('--pbv-ui', ui);
       el.style.setProperty('--pbv-fg', fg);
       el.style.setProperty('--pbv-font', style.fontFamily);
-      if (size >= 10 && size <= 60) el.style.setProperty('--pbv-size', `${size}px`);
-      if (lh) el.style.setProperty('--pbv-lh', lh);
+      if (body && size >= 10 && size <= 60) el.style.setProperty('--pbv-size', `${size}px`);
+      if (body && lh) el.style.setProperty('--pbv-lh', lh);
     }
   }
   function append() {
